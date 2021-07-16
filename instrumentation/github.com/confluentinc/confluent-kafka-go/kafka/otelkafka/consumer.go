@@ -18,8 +18,7 @@ import (
 	"fmt"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
-
-	"go.opentelemetry.io/otel/semconv"
+	"go.opentelemetry.io/otel/attribute"
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
@@ -92,10 +91,8 @@ func (c *Consumer) startSpan(msg *kafka.Message) oteltrace.Span {
 	opts := []oteltrace.SpanOption{
 		oteltrace.WithSpanKind(oteltrace.SpanKindConsumer),
 		oteltrace.WithAttributes(
-			semconv.MessagingSystemKey.String("kafka"),
-			semconv.MessagingOperationReceive,
-			semconv.MessagingDestinationKindKeyTopic,
-			semconv.MessagingDestinationKey.String(*msg.TopicPartition.Topic),
+			attribute.String("messaging.system", "kafka"),
+			attribute.String("messaging.operation", "receive"),
 		),
 	}
 
