@@ -17,12 +17,9 @@ package otelkafka
 import (
 	"context"
 
-	otelcontrib "go.opentelemetry.io/contrib"
-	"go.opentelemetry.io/otel/propagators"
-
 	"go.opentelemetry.io/otel"
-	otelglobal "go.opentelemetry.io/otel/api/global"
-	oteltrace "go.opentelemetry.io/otel/api/trace"
+	"go.opentelemetry.io/otel/propagation"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -35,34 +32,16 @@ const (
 type config struct {
 	Tracer         oteltrace.Tracer
 	TracerProvider oteltrace.TracerProvider
-	Propagators    otel.TextMapPropagator
+	Propagators    propagation.TextMapPropagator
 	ctx            context.Context
 }
 
 func newConfig(opts ...Option) *config {
-	cfg := &config{}
-
-	for _, opt := range opts {
-		opt(cfg)
-	}
-
-	if cfg.ctx == nil {
-		cfg.ctx = context.Background()
-	}
-
-	if cfg.TracerProvider == nil {
-		cfg.TracerProvider = otelglobal.TracerProvider()
-	}
-
-	if cfg.Propagators == nil {
-		cfg.Propagators = otel.NewCompositeTextMapPropagator(propagators.TraceContext{}, propagators.Baggage{})
-	}
-
-	if cfg.Tracer == nil {
-		cfg.Tracer = cfg.TracerProvider.Tracer(
-			tracerName,
-			oteltrace.WithInstrumentationVersion(otelcontrib.SemVersion()),
-		)
+	cfg := &config{
+		Tracer:         otel.Tracer("sven.njegac/basic"),
+		TracerProvider: otel.GetTracerProvider(),
+		Propagators:    otel.GetTextMapPropagator(),
+		ctx:            context.Background(),
 	}
 
 	return cfg
@@ -73,7 +52,7 @@ type Option func(*config)
 
 // WithPropagators specifies propagators to use for extracting If none are specified, global
 // ones will be used.
-func WithPropagators(propagators otel.TextMapPropagator) Option {
+func WithPropagators(propagators propagation.TextMapPropagator) Option {
 	return func(cfg *config) {
 		cfg.Propagators = propagators
 	}

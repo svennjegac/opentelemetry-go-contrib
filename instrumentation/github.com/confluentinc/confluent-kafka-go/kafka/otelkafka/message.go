@@ -16,27 +16,29 @@ package otelkafka
 
 import (
 	"github.com/confluentinc/confluent-kafka-go/kafka"
-
-	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 // A MessageCarrier injects and extracts traces from a kafka.Message.
 type MessageCarrier struct {
-	msg *kafka.Message
+	msg  *kafka.Message
+	keys []string
 }
 
-var _ otel.TextMapCarrier = (*MessageCarrier)(nil)
+var _ propagation.TextMapCarrier = (*MessageCarrier)(nil)
 
 // NewMessageCarrier creates a new MessageCarrier.
 func NewMessageCarrier(msg *kafka.Message) MessageCarrier {
-	return MessageCarrier{msg}
+	return MessageCarrier{
+		msg: msg,
+	}
 }
 
 // Set sets a header.
 func (c MessageCarrier) Set(key, val string) {
 	// ensure uniqueness of keys
 	for i := 0; i < len(c.msg.Headers); i++ {
-		if string(c.msg.Headers[i].Key) == key {
+		if c.msg.Headers[i].Key == key {
 			c.msg.Headers = append(c.msg.Headers[:i], c.msg.Headers[i+1:]...)
 			i--
 		}
@@ -45,14 +47,19 @@ func (c MessageCarrier) Set(key, val string) {
 		Key:   key,
 		Value: []byte(val),
 	})
+	c.keys = append(c.keys, key)
 }
 
 // Get retrieves a single value for a given key.
 func (c MessageCarrier) Get(key string) string {
 	for _, h := range c.msg.Headers {
-		if string(h.Key) == key {
+		if h.Key == key {
 			return string(h.Value)
 		}
 	}
 	return ""
+}
+
+func (c MessageCarrier) Keys() []string {
+	return c.keys
 }

@@ -19,9 +19,8 @@ import (
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 
-	oteltrace "go.opentelemetry.io/otel/api/trace"
-	"go.opentelemetry.io/otel/label"
 	"go.opentelemetry.io/otel/semconv"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 // NewConsumer calls kafka.NewConsumer and wraps the resulting Consumer.
@@ -97,8 +96,7 @@ func (c *Consumer) startSpan(msg *kafka.Message) oteltrace.Span {
 			semconv.MessagingOperationReceive,
 			semconv.MessagingDestinationKindKeyTopic,
 			semconv.MessagingDestinationKey.String(*msg.TopicPartition.Topic),
-			label.Key(kafkaMessageKeyField).String(string(msg.Key)),
-			label.Key(kafkaPartitionField).Int32(msg.TopicPartition.Partition)),
+		),
 	}
 
 	// Start a span using parentSpanContext
