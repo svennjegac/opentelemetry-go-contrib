@@ -20,8 +20,6 @@ import (
 	"fmt"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
-	"go.opentelemetry.io/otel/attribute"
-
 	"go.opentelemetry.io/otel/codes"
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
@@ -34,19 +32,19 @@ type Producer struct {
 }
 
 // NewProducer calls kafka.NewProducer and wraps the resulting Producer.
-func NewProducer(conf *kafka.ConfigMap, opts ...Option) (*Producer, error) {
+func NewProducer(conf *kafka.ConfigMap) (*Producer, error) {
 	p, err := kafka.NewProducer(conf)
 	if err != nil {
 		return nil, err
 	}
-	return WrapProducer(p, opts...), nil
+	return WrapProducer(p), nil
 }
 
 // WrapProducer wraps a kafka.Producer so requests are traced.
-func WrapProducer(p *kafka.Producer, opts ...Option) *Producer {
+func WrapProducer(p *kafka.Producer) *Producer {
 	wrapped := &Producer{
 		Producer: p,
-		cfg:      newConfig(opts...),
+		cfg:      newConfig(),
 	}
 	wrapped.produceChannel = wrapped.traceProduceChannel(p.ProduceChannel())
 	return wrapped
@@ -70,18 +68,10 @@ func (p *Producer) traceProduceChannel(out chan *kafka.Message) chan *kafka.Mess
 }
 
 func (p *Producer) startSpan(msg *kafka.Message) oteltrace.Span {
-	opts := []oteltrace.SpanOption{
-		oteltrace.WithSpanKind(oteltrace.SpanKindProducer),
-		oteltrace.WithAttributes(
-			attribute.String("messaging.system", "kafka"),
-			attribute.String("messaging.operation", "receive"),
-		),
-	}
-
 	// If there's a span context in the message, use that as the parent context.
 	carrier := NewMessageCarrier(msg)
 	ctx := p.cfg.Propagators.Extract(p.cfg.ctx, carrier)
-	ctx, span := p.cfg.Tracer.Start(ctx, fmt.Sprintf("%s send", *msg.TopicPartition.Topic), opts...)
+	ctx, span := p.cfg.Tracer.Start(ctx, fmt.Sprintf("%s send", *msg.TopicPartition.Topic))
 
 	// Inject the span context so consumers can pick it up
 	carrier = NewMessageCarrier(msg)

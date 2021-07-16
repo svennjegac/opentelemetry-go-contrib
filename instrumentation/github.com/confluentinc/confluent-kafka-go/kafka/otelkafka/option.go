@@ -29,7 +29,7 @@ type config struct {
 	ctx            context.Context
 }
 
-func newConfig(opts ...Option) *config {
+func newConfig() *config {
 	cfg := &config{
 		Tracer:         otel.Tracer("sven.njegac/basic"),
 		TracerProvider: otel.GetTracerProvider(),
@@ -39,6 +39,3 @@ func newConfig(opts ...Option) *config {
 
 	return cfg
 }
-
-// Option specifies instrumentation configuration options.
-type Option func(*config)

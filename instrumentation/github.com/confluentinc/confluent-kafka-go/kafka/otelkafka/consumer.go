@@ -18,17 +18,16 @@ import (
 	"fmt"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
-	"go.opentelemetry.io/otel/attribute"
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 // NewConsumer calls kafka.NewConsumer and wraps the resulting Consumer.
-func NewConsumer(conf *kafka.ConfigMap, opts ...Option) (*Consumer, error) {
+func NewConsumer(conf *kafka.ConfigMap) (*Consumer, error) {
 	c, err := kafka.NewConsumer(conf)
 	if err != nil {
 		return nil, err
 	}
-	return WrapConsumer(c, opts...), nil
+	return WrapConsumer(c), nil
 }
 
 // A Consumer wraps a kafka.Consumer.
@@ -40,10 +39,10 @@ type Consumer struct {
 }
 
 // WrapConsumer wraps a kafka.Consumer so that any consumed events are traced.
-func WrapConsumer(c *kafka.Consumer, opts ...Option) *Consumer {
+func WrapConsumer(c *kafka.Consumer) *Consumer {
 	wrapped := &Consumer{
 		Consumer: c,
-		cfg:      newConfig(opts...),
+		cfg:      newConfig(),
 	}
 	wrapped.events = wrapped.traceEventsChannel(c.Events())
 	return wrapped
@@ -88,16 +87,8 @@ func (c *Consumer) startSpan(msg *kafka.Message) oteltrace.Span {
 	carrier := NewMessageCarrier(msg)
 	parentSpanContext := c.cfg.Propagators.Extract(c.cfg.ctx, carrier)
 
-	opts := []oteltrace.SpanOption{
-		oteltrace.WithSpanKind(oteltrace.SpanKindConsumer),
-		oteltrace.WithAttributes(
-			attribute.String("messaging.system", "kafka"),
-			attribute.String("messaging.operation", "receive"),
-		),
-	}
-
 	// Start a span using parentSpanContext
-	newCtx, span := c.cfg.Tracer.Start(parentSpanContext, fmt.Sprintf("%s receive", *msg.TopicPartition.Topic), opts...)
+	newCtx, span := c.cfg.Tracer.Start(parentSpanContext, fmt.Sprintf("%s receive", *msg.TopicPartition.Topic))
 
 	// Inject current span context, so consumers can use it to propagate span for furthur processing
 	c.cfg.Propagators.Inject(newCtx, carrier)
