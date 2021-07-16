@@ -22,13 +22,6 @@ import (
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
-const (
-	tracerName = "go.opentelemetry.io/contrib/instrumentation/github.com/confluentinc/confluent-kafka-go/kafka/otelkafka"
-
-	kafkaPartitionField  = "messaging.kafka.partition"
-	kafkaMessageKeyField = "messaging.kafka.message_key"
-)
-
 type config struct {
 	Tracer         oteltrace.Tracer
 	TracerProvider oteltrace.TracerProvider
@@ -49,33 +42,3 @@ func newConfig(opts ...Option) *config {
 
 // Option specifies instrumentation configuration options.
 type Option func(*config)
-
-// WithPropagators specifies propagators to use for extracting If none are specified, global
-// ones will be used.
-func WithPropagators(propagators propagation.TextMapPropagator) Option {
-	return func(cfg *config) {
-		cfg.Propagators = propagators
-	}
-}
-
-// WithTracerProvider specifies a tracer provider to use for creating a tracer.
-// If none is specified, the global provider is used.
-func WithTracerProvider(provider oteltrace.TracerProvider) Option {
-	return func(cfg *config) {
-		cfg.TracerProvider = provider
-	}
-}
-
-// WithContext sets the config context to ctx.
-func WithContext(ctx context.Context) Option {
-	return func(cfg *config) {
-		cfg.ctx = ctx
-	}
-}
-
-// WithTracer sets the config tracer
-func WithTracer(tracer oteltrace.Tracer) Option {
-	return func(cfg *config) {
-		cfg.Tracer = tracer
-	}
-}
