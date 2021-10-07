@@ -31,10 +31,8 @@ type config struct {
 
 func newConfig() *config {
 	cfg := &config{
-		Tracer:         otel.Tracer("sven.njegac/basic"),
-		TracerProvider: otel.GetTracerProvider(),
-		Propagators:    otel.GetTextMapPropagator(),
-		ctx:            context.Background(),
+		Tracer:      otel.Tracer("sven.njegac/basic"),
+		Propagators: otel.GetTextMapPropagator(),
 	}
 
 	return cfg

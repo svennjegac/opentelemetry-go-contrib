@@ -22,7 +22,9 @@ import (
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/pkg/errors"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 
 	oteltrace "go.opentelemetry.io/otel/trace"
@@ -34,8 +36,10 @@ type Producer struct {
 	doneCtx            context.Context
 	doneCtxCancel      context.CancelFunc
 	confluentProducer  *kafka.Producer
-	cfg                *config
 	otelProduceChannel chan *kafka.Message
+
+	tracer      oteltrace.Tracer
+	propagators propagation.TextMapPropagator
 }
 
 // WrapProducer wraps a kafka.Producer so requests are traced.
@@ -46,8 +50,10 @@ func WrapProducer(ctx context.Context, confluentProducer *kafka.Producer) *Produ
 		doneCtx:            doneCtx,
 		doneCtxCancel:      doneCtxCancel,
 		confluentProducer:  confluentProducer,
-		cfg:                newConfig(),
 		otelProduceChannel: make(chan *kafka.Message),
+
+		tracer:      otel.Tracer("github.com/svennjegac/opentelemetry-go-contrib/instrumentation/github.com/confluentinc/confluent-kafka-go/kafka/otelkafka"),
+		propagators: otel.GetTextMapPropagator(),
 	}
 	otelProducer.traceProduceChannel()
 	return otelProducer
@@ -112,12 +118,12 @@ func (p *Producer) WaitTeardown() {
 func (p *Producer) startSpan(msg *kafka.Message) oteltrace.Span {
 	// If there's a span context in the message, use that as the parent context.
 	carrier := NewMessageCarrier(msg)
-	ctx := p.cfg.Propagators.Extract(p.cfg.ctx, carrier)
-	ctx, span := p.cfg.Tracer.Start(ctx, fmt.Sprintf("%s-produce", *msg.TopicPartition.Topic))
+	ctx := p.propagators.Extract(context.Background(), carrier)
+	ctx, span := p.tracer.Start(ctx, fmt.Sprintf("%s-produce", *msg.TopicPartition.Topic))
 
 	// Inject the span context so consumers can pick it up
 	carrier = NewMessageCarrier(msg)
-	p.cfg.Propagators.Inject(ctx, carrier)
+	p.propagators.Inject(ctx, carrier)
 	return span
 }
 
