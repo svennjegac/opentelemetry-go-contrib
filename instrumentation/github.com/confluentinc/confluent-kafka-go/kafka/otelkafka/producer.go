@@ -17,73 +17,109 @@
 package otelkafka
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
+	"github.com/pkg/errors"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	"go.opentelemetry.io/otel/codes"
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 // Producer wraps a kafka.Producer.
 type Producer struct {
-	*kafka.Producer
-	cfg            *config
-	produceChannel chan *kafka.Message
-}
-
-// NewProducer calls kafka.NewProducer and wraps the resulting Producer.
-func NewProducer(conf *kafka.ConfigMap) (*Producer, error) {
-	p, err := kafka.NewProducer(conf)
-	if err != nil {
-		return nil, err
-	}
-	return WrapProducer(p), nil
+	ctx                context.Context
+	doneCtx            context.Context
+	doneCtxCancel      context.CancelFunc
+	confluentProducer  *kafka.Producer
+	cfg                *config
+	otelProduceChannel chan *kafka.Message
 }
 
 // WrapProducer wraps a kafka.Producer so requests are traced.
-func WrapProducer(p *kafka.Producer) *Producer {
-	wrapped := &Producer{
-		Producer: p,
-		cfg:      newConfig(),
+func WrapProducer(ctx context.Context, confluentProducer *kafka.Producer) *Producer {
+	doneCtx, doneCtxCancel := context.WithCancel(context.Background())
+	otelProducer := &Producer{
+		ctx:                ctx,
+		doneCtx:            doneCtx,
+		doneCtxCancel:      doneCtxCancel,
+		confluentProducer:  confluentProducer,
+		cfg:                newConfig(),
+		otelProduceChannel: make(chan *kafka.Message),
 	}
-	wrapped.produceChannel = wrapped.traceProduceChannel(p.ProduceChannel())
-	return wrapped
+	otelProducer.traceProduceChannel()
+	return otelProducer
 }
 
-func (p *Producer) traceProduceChannel(out chan *kafka.Message) chan *kafka.Message {
-	if out == nil {
-		return out
-	}
+// ProduceChannel returns a channel which can receive kafka Messages and will
+// send them to the underlying producer channel.
+func (p *Producer) ProduceChannel() chan *kafka.Message {
+	return p.otelProduceChannel
+}
 
-	in := make(chan *kafka.Message, 1)
+func (p *Producer) traceProduceChannel() {
 	go func() {
-		for msg := range in {
+		defer p.doneCtxCancel()
+
+		for msg := range p.otelProduceChannel {
 			span := p.startSpan(msg)
-			out <- msg
-			span.End()
+			select {
+			case p.confluentProducer.ProduceChannel() <- msg:
+				span.AddEvent(
+					"confluent-produce-channel-write",
+					trace.WithAttributes(
+						attribute.String("kafka-msg-key", string(msg.Key)),
+					),
+				)
+				span.End()
+
+			case <-p.ctx.Done():
+				span.AddEvent(
+					"confluent-produce-channel-skip",
+					trace.WithAttributes(
+						attribute.String("kafka-msg-key", string(msg.Key)),
+					),
+				)
+				span.RecordError(
+					errors.New("confluent produce channel skip"),
+					trace.WithAttributes(
+						attribute.String("kafka-msg-key", string(msg.Key)),
+					),
+				)
+				span.End()
+				return
+			}
 		}
 	}()
+}
 
-	return in
+// Close closes internal produce channel.
+// Use case:
+// - User is writing to otel producer ProduceChannel()
+// - User stops writing to otel producer ProduceChannel()
+// - Now Close() can be safely called
+func (p *Producer) Close() {
+	close(p.otelProduceChannel)
+}
+
+// WaitTeardown ensures that otel producer stopped writing to underlying confluent kafka produce channel.
+func (p *Producer) WaitTeardown() {
+	<-p.doneCtx.Done()
 }
 
 func (p *Producer) startSpan(msg *kafka.Message) oteltrace.Span {
 	// If there's a span context in the message, use that as the parent context.
 	carrier := NewMessageCarrier(msg)
 	ctx := p.cfg.Propagators.Extract(p.cfg.ctx, carrier)
-	ctx, span := p.cfg.Tracer.Start(ctx, fmt.Sprintf("%s send", *msg.TopicPartition.Topic))
+	ctx, span := p.cfg.Tracer.Start(ctx, fmt.Sprintf("%s-produce", *msg.TopicPartition.Topic))
 
 	// Inject the span context so consumers can pick it up
 	carrier = NewMessageCarrier(msg)
 	p.cfg.Propagators.Inject(ctx, carrier)
 	return span
-}
-
-// Close calls the underlying Producer.Close and also closes the internal
-// wrapping producer channel.
-func (p *Producer) Close() {
-	close(p.produceChannel)
-	p.Producer.Close()
 }
 
 // Produce calls the underlying Producer.Produce and traces the request.
@@ -110,7 +146,7 @@ func (p *Producer) Produce(msg *kafka.Message, deliveryChan chan kafka.Event) er
 		}()
 	}
 
-	err := p.Producer.Produce(msg, deliveryChan)
+	err := p.confluentProducer.Produce(msg, deliveryChan)
 	// with no delivery channel, finish immediately
 	if deliveryChan == nil {
 		if err != nil {
@@ -120,10 +156,4 @@ func (p *Producer) Produce(msg *kafka.Message, deliveryChan chan kafka.Event) er
 	}
 
 	return err
-}
-
-// ProduceChannel returns a channel which can receive kafka Messages and will
-// send them to the underlying producer channel.
-func (p *Producer) ProduceChannel() chan *kafka.Message {
-	return p.produceChannel
 }
