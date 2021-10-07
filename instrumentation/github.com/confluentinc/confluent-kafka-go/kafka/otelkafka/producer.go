@@ -35,7 +35,7 @@ type Producer struct {
 	ctx                context.Context
 	doneCtx            context.Context
 	doneCtxCancel      context.CancelFunc
-	confluentProducer  *kafka.Producer
+	ConfluentProducer  *kafka.Producer
 	otelProduceChannel chan *kafka.Message
 
 	tracer      oteltrace.Tracer
@@ -49,7 +49,7 @@ func WrapProducer(ctx context.Context, confluentProducer *kafka.Producer) *Produ
 		ctx:                ctx,
 		doneCtx:            doneCtx,
 		doneCtxCancel:      doneCtxCancel,
-		confluentProducer:  confluentProducer,
+		ConfluentProducer:  confluentProducer,
 		otelProduceChannel: make(chan *kafka.Message),
 
 		tracer:      otel.Tracer("github.com/svennjegac/opentelemetry-go-contrib/instrumentation/github.com/confluentinc/confluent-kafka-go/kafka/otelkafka"),
@@ -72,7 +72,7 @@ func (p *Producer) traceProduceChannel() {
 		for msg := range p.otelProduceChannel {
 			span := p.startSpan(msg)
 			select {
-			case p.confluentProducer.ProduceChannel() <- msg:
+			case p.ConfluentProducer.ProduceChannel() <- msg:
 				span.AddEvent(
 					"confluent-produce-channel-enqueue",
 					trace.WithAttributes(
@@ -136,7 +136,7 @@ func (p *Producer) Produce(msg *kafka.Message, deliveryChan chan kafka.Event) er
 		otelDeliveryChan = make(chan kafka.Event, 1)
 	}
 
-	err := p.confluentProducer.Produce(msg, otelDeliveryChan)
+	err := p.ConfluentProducer.Produce(msg, otelDeliveryChan)
 	// message is not enqueued in librdkafka, method should return immediately
 	if err != nil {
 		span.RecordError(
