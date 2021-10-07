@@ -25,7 +25,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
-	"go.opentelemetry.io/otel/codes"
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
@@ -69,7 +68,7 @@ func (p *Producer) traceProduceChannel() {
 			select {
 			case p.confluentProducer.ProduceChannel() <- msg:
 				span.AddEvent(
-					"confluent-produce-channel-write",
+					"confluent-produce-channel-enqueue",
 					trace.WithAttributes(
 						attribute.String("kafka-msg-key", string(msg.Key)),
 					),
@@ -126,34 +125,65 @@ func (p *Producer) startSpan(msg *kafka.Message) oteltrace.Span {
 func (p *Producer) Produce(msg *kafka.Message, deliveryChan chan kafka.Event) error {
 	span := p.startSpan(msg)
 
-	// If the user has selected a delivery channel, we will wrap it and
-	// wait for the delivery event to finish the span
+	var otelDeliveryChan chan kafka.Event
 	if deliveryChan != nil {
-		oldDeliveryChan := deliveryChan
-		deliveryChan = make(chan kafka.Event)
-		go func() {
-			var err error
-			evt := <-deliveryChan
-			if msg, ok := evt.(*kafka.Message); ok {
-				// delivery errors are returned via TopicPartition.Error
-				err = msg.TopicPartition.Error
-			}
-			if err != nil {
-				span.SetStatus(codes.Error, err.Error())
-			}
-			span.End()
-			oldDeliveryChan <- evt
-		}()
+		otelDeliveryChan = make(chan kafka.Event, 1)
 	}
 
-	err := p.confluentProducer.Produce(msg, deliveryChan)
-	// with no delivery channel, finish immediately
-	if deliveryChan == nil {
-		if err != nil {
-			span.SetStatus(codes.Error, err.Error())
-		}
+	err := p.confluentProducer.Produce(msg, otelDeliveryChan)
+	// message is not enqueued in librdkafka, method should return immediately
+	if err != nil {
+		span.RecordError(
+			errors.Wrap(err, "confluent produce cannot enqueue message"),
+			trace.WithAttributes(
+				attribute.String("kafka-msg-key", string(msg.Key)),
+			),
+		)
 		span.End()
+		return err
 	}
 
-	return err
+	// message is successfully enqueued in librdkafka, ack will be available on the events channel
+	// method should return immediately
+	if otelDeliveryChan == nil {
+		span.AddEvent(
+			"confluent-produce-enqueue",
+			trace.WithAttributes(
+				attribute.String("kafka-msg-key", string(msg.Key)),
+			),
+		)
+		span.End()
+		return nil
+	}
+
+	// message is successfully enqueued in librdkafka, ack will be available on the otel delivery chan
+	// start a goroutine which will pass ack to the actual delivery channel
+	// both otel and actual delivery channels have buffer of 1, so this goroutine will for sure be garbage collected
+	// (if user is not trying to read from actual delivery channel, this goroutine is still able to write
+	// to delivery channel and exit)
+	go func() {
+		event := <-otelDeliveryChan
+		span.AddEvent(
+			"confluent-produce-delivery-acknowledgement",
+			trace.WithAttributes(
+				attribute.String("kafka-msg-key", string(msg.Key)),
+			),
+		)
+
+		if ack, ok := event.(*kafka.Message); ok {
+			if ack.TopicPartition.Error != nil {
+				span.RecordError(
+					ack.TopicPartition.Error,
+					trace.WithAttributes(
+						attribute.String("kafka-msg-key", string(ack.Key)),
+					),
+				)
+			}
+		}
+
+		span.End()
+		deliveryChan <- event
+	}()
+
+	return nil
 }
