@@ -70,7 +70,7 @@ func (p *Producer) traceProduceChannel() {
 		defer p.doneCtxCancel()
 
 		for msg := range p.otelProduceChannel {
-			span := p.startSpan(msg)
+			span := p.startSpan(context.Background(), msg)
 			select {
 			case p.ConfluentProducer.ProduceChannel() <- msg:
 				span.AddEvent(
@@ -115,10 +115,10 @@ func (p *Producer) WaitTeardown() {
 	<-p.doneCtx.Done()
 }
 
-func (p *Producer) startSpan(msg *kafka.Message) oteltrace.Span {
+func (p *Producer) startSpan(ctx context.Context, msg *kafka.Message) oteltrace.Span {
 	// If there's a span context in the message, use that as the parent context.
 	carrier := NewMessageCarrier(msg)
-	ctx := p.propagators.Extract(context.Background(), carrier)
+	ctx = p.propagators.Extract(ctx, carrier)
 	ctx, span := p.tracer.Start(ctx, fmt.Sprintf("%s-produce", *msg.TopicPartition.Topic))
 
 	// Inject the span context so consumers can pick it up
@@ -128,8 +128,8 @@ func (p *Producer) startSpan(msg *kafka.Message) oteltrace.Span {
 }
 
 // Produce calls the underlying Producer.Produce and traces the request.
-func (p *Producer) Produce(msg *kafka.Message, deliveryChan chan kafka.Event) error {
-	span := p.startSpan(msg)
+func (p *Producer) Produce(ctx context.Context, msg *kafka.Message, deliveryChan chan kafka.Event) error {
+	span := p.startSpan(ctx, msg)
 
 	var otelDeliveryChan chan kafka.Event
 	if deliveryChan != nil {
